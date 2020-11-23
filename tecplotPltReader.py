@@ -1,5 +1,30 @@
+#!/usr/bin/env python3
+#%%
 import construct
 import numpy as np
+import logging
+import struct
+from enum import IntEnum
+logging.basicConfig(format='%(levelname)s %(threadName)s : %(message)s',level=logging.INFO)
+logging.getLogger().setLevel(logging.INFO)
+
+class ZoneType(IntEnum):
+    ORDERED = 0
+    FELINESEG = 1
+    FETRIANGLE = 2
+    FEQUADRILATERAL = 3
+    FETETRAHEDRON = 4
+    FEBRICK = 5
+    FEPOLYGON = 6
+    FEPOLYHEDRON = 7
+
+FEMNumNode = {
+    ZoneType.FELINESEG: 2,
+    ZoneType.FETRIANGLE: 3,
+    ZoneType.FEQUADRILATERAL: 4,
+    ZoneType.FEBRICK: 8,
+    ZoneType.FETETRAHEDRON: 4
+}
 
 def read_tec_str(byte_list):
     if not len(byte_list) == 4:
@@ -86,10 +111,7 @@ def read_var_names(byte_list, num_vars):
 
     return var_names, next_byte
 
-
 def parse_zone(byte_list, num_vars):
-    FeZone = lambda x: x>0
-
     zone={}
     zone_name = get_title(byte_list)
     if zone_name['Correct']==False:
@@ -100,13 +122,13 @@ def parse_zone(byte_list, num_vars):
     byte_start = zone_name['next_byte']
     byte_end = zone_name['next_byte']+4
 
-    zone['ParentZone']= construct.Int32ul.parse(
+    zone['ParentZone']= construct.Int32sl.parse(
         byte_list[byte_start:byte_end])
 
     byte_start = byte_start+4
     byte_end = byte_end + 4
 
-    zone['StrandID'] = construct.Int32ul.parse(
+    zone['StrandID'] = construct.Int32sl.parse(
         byte_list[byte_start:byte_end])
 
     byte_start = byte_end
@@ -118,20 +140,22 @@ def parse_zone(byte_list, num_vars):
     byte_start = byte_end
     byte_end = byte_end + 4
 
-    zone['NotUsed'] = construct.Int32ul.parse(
+    zone['NotUsed'] = construct.Int32sl.parse(
         byte_list[byte_start:byte_end])
 
     byte_start = byte_start + 4
     byte_end = byte_end + 4
 
-    zone['ZoneType'] = construct.Int32ul.parse(
-        byte_list[byte_start:byte_end])
+    zone['ZoneType'] = ZoneType(construct.Int32sl.parse(
+        byte_list[byte_start:byte_end]))
 
     byte_start = byte_start + 4
     byte_end = byte_end + 4
 
-    zone['VarLoc'] = construct.Int32ul.parse(
+    zone['VarLoc'] = construct.Int32sl.parse(
         byte_list[byte_start:byte_end])
+    zone['VarLocs'] = [0]*num_vars
+
 
     if zone['VarLoc'] == 1:
         byte_start = byte_start + 4
@@ -141,47 +165,75 @@ def parse_zone(byte_list, num_vars):
             byte_start = byte_start + i*4
             byte_end = byte_end + i*4
             varLocs.append(
-                           construct.Int32ul.parse(
+                           construct.Int32sl.parse(
                            byte_list[byte_start:byte_end])
                           )
+        zone['VarLocs'] = varLocs
+
+
     byte_start = byte_start + 4
     byte_end = byte_end + 4
-    zone['RawFaceNeighbors'] = construct.Int32ul.parse(
+    zone['RawFaceNeighbors'] = construct.Int32sl.parse(
         byte_list[byte_start:byte_end])
 
 
     byte_start = byte_start + 4
     byte_end = byte_end + 4
-    zone['UserdefinedFaceNeighbors'] = construct.Int32ul.parse(
+    zone['UserdefinedFaceNeighbors'] = construct.Int32sl.parse(
         byte_list[byte_start:byte_end])
 
 
 
-    if FeZone(zone['ZoneType']):
+    if zone['ZoneType'] != ZoneType.ORDERED:
         byte_start = byte_start + 4
         byte_end = byte_end + 4
-        zone['RawFaceNeighbors'] = construct.Int32ul.parse(
+        zone['RawFaceNeighbors'] = construct.Int32sl.parse(
             byte_list[byte_start:byte_end])
 
-    if not FeZone(zone['ZoneType']):
+    if zone['ZoneType'] == ZoneType.ORDERED:
         byte_start = byte_start + 4
         byte_end = byte_end + 4
-        zone['Imax'] = construct.Int32ul.parse(
-            byte_list[byte_start:byte_end])
-
-        byte_start = byte_start + 4
-        byte_end = byte_end + 4
-        zone['Jmax'] = construct.Int32ul.parse(
+        zone['Imax'] = construct.Int32sl.parse(
             byte_list[byte_start:byte_end])
 
         byte_start = byte_start + 4
         byte_end = byte_end + 4
-        zone['Kmax'] = construct.Int32ul.parse(
+        zone['Jmax'] = construct.Int32sl.parse(
+            byte_list[byte_start:byte_end])
+
+        byte_start = byte_start + 4
+        byte_end = byte_end + 4
+        zone['Kmax'] = construct.Int32sl.parse(
+            byte_list[byte_start:byte_end])
+    else:
+        byte_start += 4
+        byte_end += 4
+        zone['NumPts'] = construct.Int32sl.parse(byte_list[byte_start:byte_end])
+        if zone['ZoneType'] in [ZoneType.FEPOLYGON, ZoneType.FEPOLYHEDRON]:
+            raise ValueError('Unsupported FEM type')
+
+        byte_start += 4
+        byte_end += 4
+        zone['NumElements'] = construct.Int32sl.parse(byte_list[byte_start:byte_end])
+
+        byte_start += 4
+        byte_end += 4
+        zone['ICellDim'] = construct.Int32sl.parse(
+            byte_list[byte_start:byte_end])
+
+        byte_start += 4
+        byte_end += 4
+        zone['JCellDim'] = construct.Int32sl.parse(
+            byte_list[byte_start:byte_end])
+
+        byte_start += 4
+        byte_end += 4
+        zone['KCellDim'] = construct.Int32sl.parse(
             byte_list[byte_start:byte_end])
 
     byte_start = byte_start + 4
     byte_end = byte_end + 4
-    zone['AuxdataNamePair'] = construct.Int32ul.parse(
+    zone['AuxdataNamePair'] = construct.Int32sl.parse(
             byte_list[byte_start:byte_end])
     return zone
 
@@ -200,8 +252,8 @@ def find_zones(byte_list, eo_header):
         next_byte = (counter + 1) * 4
         zone_marker = construct.Float32l.parse(byte_list[first_byte:next_byte])
         if zone_marker == 299.0:
-            print('Zone Found')
-            print(first_byte)
+            logging.debug('Zone Found')
+            logging.debug(first_byte)
             zone_makers.append(first_byte)
         counter = counter + 1
 
@@ -253,7 +305,7 @@ def read_header(byte_list):
 
     zones=list()
     for zone in zone_markers:
-        zones.append(parse_zone(byte_list[start+zone:], var_names))
+        zones.append(parse_zone(byte_list[start+zone+4:], len(var_names)))
 
     # Now find and read zones
     #zones = find_zones(byte_list[next_byte+start:])
@@ -288,8 +340,7 @@ def find_zones_data(byte_list, num_zones, offset):
         counter = counter + 1
     return zone_makers
 
-
-def read_zones(byte_list, zone_markers, header, binary_file):
+def read_zones(byte_list, zone_markers, header):
     var_names = header['VarNames']
     var_dict = {}
     zone_vars = list()
@@ -298,40 +349,48 @@ def read_zones(byte_list, zone_markers, header, binary_file):
     zones_list=[]
     for zone in zone_markers:
         zone_data={}
+        if construct.Float32l.parse(byte_list[zone:zone+4]) != 299.0:
+            raise ValueError('Wrong zone header')
         start_byte = zone + 4
         var_dict = {}
         for name in var_names:
             end_byte = start_byte + 4
-            var_dict[name] = construct.Int32ul.parse(byte_list[start_byte:end_byte])
+            var_dict[name] = construct.Int32sl.parse(byte_list[start_byte:end_byte])
             start_byte = end_byte
         zone_data['VarDict'] = var_dict
 
-        zone_data['PassiveVars'] = construct.Int32ul.parse(byte_list[start_byte:start_byte + 4])
+        zone_data['PassiveVars'] = construct.Int32sl.parse(byte_list[start_byte:start_byte + 4])
+        start_byte += 4
         if zone_data['PassiveVars']  != 0:
             passive_var_dict={}
             for name in var_names:
                 end_byte = start_byte + 4
-                passive_var_dict[name] = construct.Int32ul.parse(byte_list[start_byte:end_byte])
+                passive_var_dict[name] = construct.Int32sl.parse(byte_list[start_byte:end_byte])
                 start_byte = end_byte
             zone_data['PassiveVarDict'] = passive_var_dict
 
-        zone_data['VarSharing'] = construct.Int32ul.parse(byte_list[start_byte:start_byte + 4])
+        zone_data['VarSharing'] = construct.Int32sl.parse(byte_list[start_byte:start_byte + 4])
+        start_byte += 4
         if zone_data['VarSharing']  != 0:
             share_var_dict={}
             for name in var_names:
                 end_byte = start_byte + 4
-                share_var_dict[name] = construct.Int32ul.parse(byte_list[start_byte:end_byte])
+                share_var_dict[name] = construct.Int32sl.parse(byte_list[start_byte:end_byte])
                 start_byte = end_byte
             zone_data['ShareVarDict'] = share_var_dict
+        else:
+            d = {}
+            for name in var_names:
+                d[name] = -1
+            zone_data['ShareVarDict'] = d
 
-
-        zone_data['ConnSharing'] = construct.Int32ul.parse(byte_list[start_byte:start_byte + 4])
+        zone_data['ConnSharing'] = construct.Int32sl.parse(byte_list[start_byte:start_byte + 4])
         start_byte=start_byte+4
         non_passive_non_shared = list()
 
         if zone_data['VarSharing'] !=0:
             for name in var_names:
-                if zone_data['ShareVarDict'][name] == 0:
+                if zone_data['ShareVarDict'][name] == -1:
                     non_passive_non_shared.append(name)
         else:
             for name in var_names:
@@ -346,7 +405,6 @@ def read_zones(byte_list, zone_markers, header, binary_file):
 
         min_val = {}
         max_val = {}
-        start_byte=start_byte+4+4
         for var_with_min_max in non_passive_non_shared:
             end_byte = start_byte + 8
             min_val[var_with_min_max] = construct.Float64l.parse(byte_list[start_byte:end_byte])
@@ -356,52 +414,74 @@ def read_zones(byte_list, zone_markers, header, binary_file):
             max_val[var_with_min_max] = construct.Float64l.parse(byte_list[start_byte:end_byte])
             start_byte = end_byte
 
-        print('start_data_list')
-        print(start_byte)
+        logging.debug('start_data_list')
+        logging.debug(start_byte)
 
         zone_data['Min_Vals'] = min_val
         zone_data['Max_Vals'] = max_val
 
-        Imax = header['Zones'][zone_counter]['Imax']
-        Jmax = header['Zones'][zone_counter]['Jmax']
-        Kmax = header['Zones'][zone_counter]['Kmax']
-        print('Imax in read Zone')
-        print(Imax)
-        binary_file.seek(0)
-        print('NumValuesPerVariable')
-        print(Imax * Jmax * Kmax)
 
+        zt = header['Zones'][zone_counter]['ZoneType']
+        for ivar, name in enumerate(non_passive_non_shared):
+            if zt == ZoneType.ORDERED:
+                Imax = header['Zones'][zone_counter]['Imax']
+                Jmax = header['Zones'][zone_counter]['Jmax']
+                Kmax = header['Zones'][zone_counter]['Kmax']
+                if header['Zones'][zone_counter]['VarLocs'][ivar] == 0:
+                    ndata = Imax * Jmax * Kmax
+                else:
+                    ndata = Imax * Jmax * (Kmax-1)
+            else:
+                NumPts = header['Zones'][zone_counter]['NumPts']
+                NumElements = header['Zones'][zone_counter]['NumElements']
+                if header['Zones'][zone_counter]['VarLocs'][ivar] == 0:
+                    ndata = NumPts
+                else:
+                    ndata = NumElements
 
-
-
-        for name in var_names:
-            print('StartByte')
-            print(start_byte)
             data = np.frombuffer(byte_list, dtype='float32',
-                                      count=Imax * Jmax * Kmax,
-                                      offset=start_byte)
-            start_byte = start_byte + 4 * Imax * Jmax * Kmax
+                            count=ndata,
+                            offset=start_byte)
+            start_byte = start_byte + 4 * ndata
+            end_byte = start_byte
             zone_data[name] = data
+
+
+        if zt != ZoneType.ORDERED:
+            if zt not in FEMNumNode.keys():
+                raise ValueError('Unsupported FEM type')
+            NumPts = header['Zones'][zone_counter]['NumPts']
+            NumElements = header['Zones'][zone_counter]['NumElements']
+            connect = np.frombuffer(byte_list, dtype='float32',
+                            count=NumElements * FEMNumNode[zt],
+                            offset=start_byte)
+            start_byte = start_byte + NumElements * FEMNumNode[zt]
+            end_byte = start_byte
+            zone_data['connect'] = connect
+
+
+        zone_data['StartByte'] = zone
+        zone_data['EndByte'] = end_byte
 
             #var_data=list()
             #for I in range(0, Imax):
             #    for J in range(0, Jmax):
             #        for K in range(0, Kmax):
             #            end_byte = start_byte + 4
-                        #print(byte_list[start_byte:end_byte])
-                        #print(construct.Float32l.parse(byte_list[start_byte:end_byte]))
+                        #logging.debug(byte_list[start_byte:end_byte])
+                        #logging.debug(construct.Float32l.parse(byte_list[start_byte:end_byte]))
             #            var_data.append( construct.Float32b.parse(byte_list[start_byte:end_byte]))
             #            start_byte = end_byte
 
      #       for J in range(0, Jmax):
      #           end_byte = start_byte + 4
-     #           #print(construct.Float32l.parse(byte_list[start_byte:end_byte]))
+     #           #logging.debug(construct.Float32l.parse(byte_list[start_byte:end_byte]))
      #           var_data.append(construct.Float32b.parse(byte_list[start_byte:end_byte]))
      #           start_byte = end_byte
 
      #       for K in range(0, Kmax):
      #           end_byte = start_byte + 4
-     #           #print(construct.Float32l.parse(byte_list[start_byte:end_byte]))
+     #           #logging.debug(construct.Float32l.parse(byte_list[start_byte:end_byte]))
      #           var_data.append(construct.Float32b.parse(byte_list[start_byte:end_byte]))
      #           start_byte = end_byte
 
@@ -409,27 +489,61 @@ def read_zones(byte_list, zone_markers, header, binary_file):
 
         zones_list.append(zone_data)
 
-        print('start_data_list')
-        print(start_byte)
+        logging.debug('start_data_list')
+        logging.debug(start_byte)
         zone_counter = zone_counter + 1
 
     return zones_list
 
 
-def read_data(byte_list, header, binary_file):
+def read_data_slow(byte_list, header):
     eo_header = header['EofHeader']
     num_zones = len(header['ZoneMarkers'])
     zone_markers = find_zones_data(byte_list[eo_header:], num_zones, eo_header)
 
-    zones_list = read_zones(byte_list, zone_markers, header, binary_file)
-
-
-    print('len_byte_list')
-    print(len(byte_list))
-
-
+    zones_list = read_zones(byte_list, zone_markers, header)
+    for izone in range(len(header['Zones'])):
+        if zones_list[izone]['VarSharing'] == 1:
+            for k, i in zones_list[izone]['ShareVarDict'].items():
+                zones_list[izone][k] = zones_list[i][k]
     return {'ZoneMarkers':zone_markers,
             'Zones':zones_list}
 
 
+def read_data(byte_list, header):
+    eo_header = header['EofHeader']
+    num_zones = len(header['Zones'])
 
+    reach_data_section = False
+    ibyte = eo_header
+    while not reach_data_section:
+        zone_marker = construct.Float32l.parse(byte_list[ibyte:ibyte+4])
+        if zone_marker == 299.0:
+            break
+        ibyte += 4
+
+    start_byte = ibyte
+    zones_list = []
+    zone_markers = []
+    for izone in range(len(header['Zones'])):
+        zone_markers.append(start_byte)
+        r = read_zones(byte_list, [start_byte], header)
+        start_byte = r[0]['EndByte']
+        zones_list.append(r[0])
+
+    # Handle VarSharing
+    for izone in range(len(header['Zones'])):
+        if zones_list[izone]['VarSharing'] == 1:
+            for k, i in zones_list[izone]['ShareVarDict'].items():
+                zones_list[izone][k] = zones_list[i][k]
+
+    return {'ZoneMarkers':zone_markers, 'Zones':zones_list}
+
+
+# %%
+if __name__ == "__main__":
+    file = '01_ID12H15_lumped_01_crtrs_movie.dat'
+    with open(file, 'rb') as f:
+        byte_list = f.read()
+    header = read_header(byte_list)
+    data = read_data(byte_list, header)
